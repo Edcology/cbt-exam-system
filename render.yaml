@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: cbt-exam-system
+    env: node
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
