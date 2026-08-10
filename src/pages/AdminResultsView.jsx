@@ -157,7 +157,7 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
       )}
 
       {/* MAIN REPORT SHEET (Optimized for Screen & Printable PDF) */}
-      <div className="glass-panel p-6 md:p-8 rounded-3xl space-y-6 print:bg-white print:text-slate-900 print:shadow-none print:p-0 print:border-none">
+      <div id="printable-report-sheet" className="glass-panel p-6 md:p-8 rounded-3xl space-y-6 print:bg-white print:text-slate-900 print:shadow-none print:p-0 print:border-none">
         
         {/* REPORT HEADER */}
         <div className="border-b-2 border-slate-700 print:border-slate-800 pb-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
