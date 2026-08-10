@@ -2,6 +2,85 @@ const express = require('express');
 const router = express.Router();
 const { get, run, all } = require('../db');
 
+// Robust Answer Matching Helper Function
+function isAnswerCorrect(qType, options, correctAnswersRaw, studentAnsRaw) {
+  if (!studentAnsRaw) return false;
+
+  const optionsList = Array.isArray(options) ? options.map(o => o.toString().trim()) : [];
+  const correctList = Array.isArray(correctAnswersRaw) ? correctAnswersRaw : [correctAnswersRaw];
+  const studentList = Array.isArray(studentAnsRaw) ? studentAnsRaw : [studentAnsRaw];
+
+  if (studentList.length === 0 || correctList.length === 0) return false;
+
+  // Build a Set of acceptable correct strings (option text, letters A/B/C/D, indices)
+  const acceptableCorrect = new Set();
+
+  for (const corr of correctList) {
+    const corrStr = corr.toString().trim();
+    const upperCorr = corrStr.toUpperCase();
+
+    // 1. Raw string (lowercase)
+    acceptableCorrect.add(corrStr.toLowerCase());
+
+    // 2. Letter A, B, C, D
+    if (['A', 'B', 'C', 'D'].includes(upperCorr)) {
+      const idx = upperCorr.charCodeAt(0) - 65;
+      if (optionsList[idx]) {
+        acceptableCorrect.add(optionsList[idx].toLowerCase());
+      }
+      acceptableCorrect.add(upperCorr);
+    }
+    // 3. Option Index 0, 1, 2, 3
+    else if (!isNaN(parseInt(corrStr)) && parseInt(corrStr) >= 0 && parseInt(corrStr) < optionsList.length) {
+      const idx = parseInt(corrStr);
+      if (optionsList[idx]) {
+        acceptableCorrect.add(optionsList[idx].toLowerCase());
+      }
+      acceptableCorrect.add(String.fromCharCode(65 + idx)); // Add 'A', 'B'...
+    }
+  }
+
+  // Normalize student answers
+  const studentChoices = studentList.map(st => st.toString().trim());
+
+  if (qType === 'single_choice' || qType === 'true_false') {
+    const sChoice = studentChoices[0];
+    if (!sChoice) return false;
+    const sLower = sChoice.toLowerCase();
+
+    // Direct match
+    if (acceptableCorrect.has(sLower)) return true;
+
+    // Check if student choice is option text and matches letter in key
+    const studentOptIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
+    if (studentOptIdx !== -1) {
+      const letter = String.fromCharCode(65 + studentOptIdx);
+      if (acceptableCorrect.has(letter)) return true;
+    }
+    return false;
+  } else if (qType === 'multiple_choice') {
+    let matchCount = 0;
+    for (const sChoice of studentChoices) {
+      const sLower = sChoice.toLowerCase();
+      let matched = acceptableCorrect.has(sLower);
+
+      if (!matched) {
+        const studentOptIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
+        if (studentOptIdx !== -1) {
+          const letter = String.fromCharCode(65 + studentOptIdx);
+          if (acceptableCorrect.has(letter)) matched = true;
+        }
+      }
+      if (matched) matchCount++;
+    }
+    // For multiple choice, candidate must match all correct answers
+    const expectedCount = Math.min(correctList.length, optionsList.length);
+    return matchCount >= expectedCount && studentChoices.length === expectedCount;
+  }
+
+  return false;
+}
+
 // Verify session code and get registration form schema
 router.get('/session-info/:code', async (req, res) => {
   try {
@@ -78,7 +157,7 @@ router.post('/start-exam', async (req, res) => {
       }
     }
 
-    // Get Primary Student Name (e.g. Full Name or first text field)
+    // Get Primary Student Name
     let studentName = student_details['Full Name'] || student_details['Name'] || Object.values(student_details)[0] || 'Anonymous Candidate';
 
     // Insert Live Candidate Session Record in DB immediately!
@@ -129,7 +208,7 @@ router.post('/start-exam', async (req, res) => {
   }
 });
 
-// Periodic Heartbeat / Ping during exam (Updates tab_switch_count & time_spent in DB)
+// Periodic Heartbeat / Ping during exam
 router.post('/ping-exam', async (req, res) => {
   try {
     const { submission_id, tab_switch_count, time_spent_seconds, answers } = req.body;
@@ -154,7 +233,7 @@ router.post('/ping-exam', async (req, res) => {
   }
 });
 
-// Submit Exam & Auto-Grade (Updates existing in_progress submission to 'submitted')
+// Submit Exam & Smart Auto-Grading
 router.post('/submit-exam', async (req, res) => {
   try {
     const { submission_id, session_id, student_name, student_details, answers, tab_switch_count, time_spent_seconds } = req.body;
@@ -180,22 +259,13 @@ router.post('/submit-exam', async (req, res) => {
     let totalMarks = 0;
 
     const gradedBreakdown = questions.map(q => {
+      const options = JSON.parse(q.options);
       const correctAnswers = JSON.parse(q.correct_answers);
       const studentAns = answers[q.id];
       const qMarks = q.marks || 1;
       totalMarks += qMarks;
 
-      let isCorrect = false;
-
-      if (q.type === 'single_choice' || q.type === 'true_false') {
-        const studentChoice = Array.isArray(studentAns) ? studentAns[0] : studentAns;
-        isCorrect = correctAnswers.includes(studentChoice);
-      } else if (q.type === 'multiple_choice') {
-        const studentChoices = Array.isArray(studentAns) ? studentAns : [studentAns];
-        if (studentChoices.length === correctAnswers.length) {
-          isCorrect = studentChoices.every(choice => correctAnswers.includes(choice));
-        }
-      }
+      const isCorrect = isAnswerCorrect(q.type, options, correctAnswers, studentAns);
 
       if (isCorrect) {
         earnedScore += qMarks;
@@ -205,7 +275,7 @@ router.post('/submit-exam', async (req, res) => {
         question_id: q.id,
         question_text: q.question_text,
         type: q.type,
-        options: JSON.parse(q.options),
+        options,
         correct_answers: correctAnswers,
         student_answer: studentAns || [],
         is_correct: isCorrect,
@@ -220,7 +290,6 @@ router.post('/submit-exam', async (req, res) => {
     let targetSubmissionId = submission_id;
 
     if (targetSubmissionId) {
-      // Update existing in_progress candidate record
       await run(`
         UPDATE submissions SET
           student_name = ?,
@@ -248,7 +317,6 @@ router.post('/submit-exam', async (req, res) => {
         targetSubmissionId
       ]);
     } else {
-      // Insert new if missing ID
       const result = await run(`
         INSERT INTO submissions (
           session_id, student_name, student_details, answers,
@@ -288,7 +356,7 @@ router.post('/submit-exam', async (req, res) => {
   }
 });
 
-// View Student Result (if released or immediate view enabled)
+// View Student Result
 router.get('/result/:submissionId', async (req, res) => {
   try {
     const submission = await get(`
@@ -314,30 +382,20 @@ router.get('/result/:submissionId', async (req, res) => {
       });
     }
 
-    // Build Detailed Question Breakdown
     const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [submission.exam_id]);
     const studentAnswers = JSON.parse(submission.answers || '{}');
 
     const breakdown = questions.map(q => {
+      const options = JSON.parse(q.options);
       const correctAnswers = JSON.parse(q.correct_answers);
       const studentAns = studentAnswers[q.id];
-      let isCorrect = false;
-
-      if (q.type === 'single_choice' || q.type === 'true_false') {
-        const choice = Array.isArray(studentAns) ? studentAns[0] : studentAns;
-        isCorrect = correctAnswers.includes(choice);
-      } else if (q.type === 'multiple_choice') {
-        const choices = Array.isArray(studentAns) ? studentAns : [studentAns];
-        if (choices.length === correctAnswers.length) {
-          isCorrect = choices.every(c => correctAnswers.includes(c));
-        }
-      }
+      const isCorrect = isAnswerCorrect(q.type, options, correctAnswers, studentAns);
 
       return {
         question_id: q.id,
         question_text: q.question_text,
         type: q.type,
-        options: JSON.parse(q.options),
+        options,
         correct_answers: correctAnswers,
         student_answer: studentAns || [],
         is_correct: isCorrect,
@@ -368,4 +426,7 @@ router.get('/result/:submissionId', async (req, res) => {
   }
 });
 
-module.exports = router;
+module.exports = {
+  router,
+  isAnswerCorrect
+};

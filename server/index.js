@@ -35,7 +35,7 @@ function getLocalNetworkIPs() {
 app.use('/api/admin', adminRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/sessions', sessionRoutes);
-app.use('/api/student', studentRoutes);
+app.use('/api/student', studentRoutes.router || studentRoutes);
 
 // Endpoint to fetch network IPs for Admin Dashboard banner
 app.get('/api/network-info', (req, res) => {

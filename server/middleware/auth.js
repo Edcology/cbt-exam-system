@@ -4,7 +4,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super-cbt-secret-key-2026';
 
 function authenticateAdminToken(req, res, next) {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  // Support Authorization header OR token query parameter for file downloads
+  const token = (authHeader && authHeader.split(' ')[1]) || req.query.token;
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' });

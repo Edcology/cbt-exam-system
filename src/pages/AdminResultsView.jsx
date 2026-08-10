@@ -35,8 +35,40 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
     }
   };
 
-  const handleExportExcel = () => {
-    window.open(`/api/sessions/${sessionId}/export-excel`, '_blank');
+  const handleExportExcel = async () => {
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/export-excel?token=${encodeURIComponent(token)}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        throw new Error('Failed to download grade sheet');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `CBT_Results_${session.session_name.replace(/[^a-zA-Z0-9_-]/g, '_')}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export error:', err);
+      setError('Failed to download grade sheet Excel file');
+    }
+  };
+
+  const handleRegrade = async () => {
+    setError('');
+    try {
+      const res = await apiRequest(`/sessions/${sessionId}/regrade`, 'POST', null, token);
+      alert(res.message);
+      fetchSubmissions();
+    } catch (err) {
+      setError(err.message || 'Failed to re-grade submissions');
+    }
   };
 
   if (loading) {
@@ -88,13 +120,22 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
           </div>
         </div>
 
-        <button
-          onClick={handleExportExcel}
-          disabled={submissions.length === 0}
-          className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-lg transition"
-        >
-          <FileSpreadsheet className="w-4 h-4" /> Export Grade Sheet (.xlsx)
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleRegrade}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2.5 px-3.5 rounded-xl shadow-lg transition"
+            title="Recalculate scores for all student submissions"
+          >
+            <RefreshCw className="w-3.5 h-3.5" /> Re-Grade Submissions
+          </button>
+          <button
+            onClick={handleExportExcel}
+            disabled={submissions.length === 0}
+            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-lg transition"
+          >
+            <FileSpreadsheet className="w-4 h-4" /> Export Grade Sheet (.xlsx)
+          </button>
+        </div>
       </div>
 
       {error && (

@@ -3,6 +3,7 @@ const router = express.Router();
 const xlsx = require('xlsx');
 const { get, run, all } = require('../db');
 const { authenticateAdminToken } = require('../middleware/auth');
+const { isAnswerCorrect } = require('./student');
 
 // Function to generate random 6-character session code
 function generateSessionCode() {
@@ -205,6 +206,64 @@ router.delete('/:id', authenticateAdminToken, async (req, res) => {
   } catch (err) {
     console.error('Delete session error:', err);
     res.status(500).json({ error: 'Failed to delete session' });
+  }
+});
+
+// Re-Grade All Submissions for Session (Fixes 0 scores retroactively)
+router.post('/:id/regrade', authenticateAdminToken, async (req, res) => {
+  try {
+    const session = await get(`
+      SELECT s.*, e.passing_score
+      FROM exam_sessions s
+      JOIN exams e ON s.exam_id = e.id
+      WHERE s.id = ?
+    `, [req.params.id]);
+
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [session.exam_id]);
+    const submissions = await all('SELECT * FROM submissions WHERE session_id = ? AND status = "submitted"', [req.params.id]);
+
+    let regradedCount = 0;
+
+    for (const sub of submissions) {
+      const studentAnswers = JSON.parse(sub.answers || '{}');
+      let earnedScore = 0;
+      let totalMarks = 0;
+
+      for (const q of questions) {
+        const options = JSON.parse(q.options);
+        const correctAnswers = JSON.parse(q.correct_answers);
+        const studentAns = studentAnswers[q.id];
+        const qMarks = q.marks || 1;
+        totalMarks += qMarks;
+
+        if (isAnswerCorrect(q.type, options, correctAnswers, studentAns)) {
+          earnedScore += qMarks;
+        }
+      }
+
+      const percentage = totalMarks > 0 ? (earnedScore / totalMarks) * 100 : 0;
+      const passed = percentage >= session.passing_score ? 1 : 0;
+
+      await run(`
+        UPDATE submissions SET
+          score = ?,
+          total_marks = ?,
+          percentage = ?,
+          passed = ?
+        WHERE id = ?
+      `, [earnedScore, totalMarks, percentage, passed, sub.id]);
+
+      regradedCount++;
+    }
+
+    res.json({ message: `Successfully re-graded ${regradedCount} student submission(s)!`, count: regradedCount });
+  } catch (err) {
+    console.error('Regrade error:', err);
+    res.status(500).json({ error: 'Failed to re-grade submissions' });
   }
 });
 
