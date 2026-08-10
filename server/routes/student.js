@@ -12,35 +12,29 @@ function isAnswerCorrect(qType, options, correctAnswersRaw, studentAnsRaw) {
 
   if (studentList.length === 0 || correctList.length === 0) return false;
 
-  // Build a Set of acceptable correct strings (option text, letters A/B/C/D, indices)
   const acceptableCorrect = new Set();
 
   for (const corr of correctList) {
     const corrStr = corr.toString().trim();
     const upperCorr = corrStr.toUpperCase();
 
-    // 1. Raw string (lowercase)
     acceptableCorrect.add(corrStr.toLowerCase());
 
-    // 2. Letter A, B, C, D
     if (['A', 'B', 'C', 'D'].includes(upperCorr)) {
       const idx = upperCorr.charCodeAt(0) - 65;
       if (optionsList[idx]) {
         acceptableCorrect.add(optionsList[idx].toLowerCase());
       }
       acceptableCorrect.add(upperCorr);
-    }
-    // 3. Option Index 0, 1, 2, 3
-    else if (!isNaN(parseInt(corrStr)) && parseInt(corrStr) >= 0 && parseInt(corrStr) < optionsList.length) {
+    } else if (!isNaN(parseInt(corrStr)) && parseInt(corrStr) >= 0 && parseInt(corrStr) < optionsList.length) {
       const idx = parseInt(corrStr);
       if (optionsList[idx]) {
         acceptableCorrect.add(optionsList[idx].toLowerCase());
       }
-      acceptableCorrect.add(String.fromCharCode(65 + idx)); // Add 'A', 'B'...
+      acceptableCorrect.add(String.fromCharCode(65 + idx));
     }
   }
 
-  // Normalize student answers
   const studentChoices = studentList.map(st => st.toString().trim());
 
   if (qType === 'single_choice' || qType === 'true_false') {
@@ -48,10 +42,8 @@ function isAnswerCorrect(qType, options, correctAnswersRaw, studentAnsRaw) {
     if (!sChoice) return false;
     const sLower = sChoice.toLowerCase();
 
-    // Direct match
     if (acceptableCorrect.has(sLower)) return true;
 
-    // Check if student choice is option text and matches letter in key
     const studentOptIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
     if (studentOptIdx !== -1) {
       const letter = String.fromCharCode(65 + studentOptIdx);
@@ -73,7 +65,6 @@ function isAnswerCorrect(qType, options, correctAnswersRaw, studentAnsRaw) {
       }
       if (matched) matchCount++;
     }
-    // For multiple choice, candidate must match all correct answers
     const expectedCount = Math.min(correctList.length, optionsList.length);
     return matchCount >= expectedCount && studentChoices.length === expectedCount;
   }
@@ -130,7 +121,7 @@ router.get('/session-info/:code', async (req, res) => {
   }
 });
 
-// Start Exam -> Registers Candidate in DB immediately with 'in_progress' status!
+// Start Exam -> Checks Duplicate Attempts & Enables Session Resume
 router.post('/start-exam', async (req, res) => {
   try {
     const { session_id, student_details } = req.body;
@@ -157,10 +148,57 @@ router.post('/start-exam', async (req, res) => {
       }
     }
 
-    // Get Primary Student Name
+    // Get Primary Student Name & Primary Reg ID
     let studentName = student_details['Full Name'] || student_details['Name'] || Object.values(student_details)[0] || 'Anonymous Candidate';
+    let regId = student_details['Student Reg Number'] || student_details['Matric Number'] || student_details['Reg Number'] || studentName;
 
-    // Insert Live Candidate Session Record in DB immediately!
+    // Fetch Questions
+    let questions = await all('SELECT id, question_text, type, options, marks FROM questions WHERE exam_id = ?', [session.exam_id]);
+    if (!questions || questions.length === 0) {
+      return res.status(400).json({ error: 'This exam does not have any questions yet.' });
+    }
+    questions = questions.map(q => ({
+      ...q,
+      options: JSON.parse(q.options)
+    }));
+    if (session.shuffle_questions) {
+      questions.sort(() => Math.random() - 0.5);
+    }
+
+    // Check if candidate already has an existing attempt for this session
+    const existingSubmission = await get(`
+      SELECT * FROM submissions
+      WHERE session_id = ? AND (
+        LOWER(student_name) = LOWER(?) OR
+        LOWER(student_details) LIKE LOWER(?)
+      )
+      ORDER BY id DESC
+    `, [session_id, studentName.trim(), `%${regId.trim()}%`]);
+
+    if (existingSubmission) {
+      if (existingSubmission.status === 'submitted') {
+        return res.status(400).json({
+          error: `Candidate "${studentName}" has already completed and submitted this exam. Multiple attempts are strictly prohibited.`
+        });
+      }
+
+      // If in_progress, allow student to RESUME active exam seamlessly!
+      const existingAnswers = JSON.parse(existingSubmission.answers || '{}');
+      return res.json({
+        submission_id: existingSubmission.id,
+        session_id: session.id,
+        exam_title: session.exam_title,
+        duration_minutes: session.duration_minutes,
+        student_name: existingSubmission.student_name,
+        student_details: JSON.parse(existingSubmission.student_details),
+        questions,
+        resumed_answers: existingAnswers,
+        resumed_time_spent: existingSubmission.time_spent_seconds || 0,
+        resumed_tab_switches: existingSubmission.tab_switch_count || 0
+      });
+    }
+
+    // Insert New Candidate Record
     const subResult = await run(`
       INSERT INTO submissions (
         session_id, student_name, student_details, answers,
@@ -169,29 +207,11 @@ router.post('/start-exam', async (req, res) => {
       ) VALUES (?, ?, ?, '{}', 0, 0, 0, 0, 'in_progress', 0, 0)
     `, [
       session_id,
-      studentName,
+      studentName.trim(),
       JSON.stringify(student_details)
     ]);
 
     const submissionId = subResult.lastID;
-
-    // Fetch Questions
-    let questions = await all('SELECT id, question_text, type, options, marks FROM questions WHERE exam_id = ?', [session.exam_id]);
-
-    if (!questions || questions.length === 0) {
-      return res.status(400).json({ error: 'This exam does not have any questions yet.' });
-    }
-
-    // Parse options for frontend
-    questions = questions.map(q => ({
-      ...q,
-      options: JSON.parse(q.options)
-    }));
-
-    // Shuffle questions if configured
-    if (session.shuffle_questions) {
-      questions.sort(() => Math.random() - 0.5);
-    }
 
     res.json({
       submission_id: submissionId,

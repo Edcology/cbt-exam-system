@@ -5,16 +5,27 @@ import AntiCheatModal from '../components/AntiCheatModal';
 import { apiRequest } from '../api';
 
 export default function StudentExam({ examData, onExamSubmitted }) {
-  const { submission_id, session_id, exam_title, duration_minutes, student_name, student_details, questions } = examData;
+  const {
+    submission_id,
+    session_id,
+    exam_title,
+    duration_minutes,
+    student_name,
+    student_details,
+    questions,
+    resumed_answers,
+    resumed_time_spent,
+    resumed_tab_switches
+  } = examData;
 
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [answers, setAnswers] = useState({}); // { [qId]: answerArrayOrString }
+  const [answers, setAnswers] = useState(resumed_answers || {}); // restored saved answers
   const [flagged, setFlagged] = useState([]); // array of qIds
-  const [timeLeftSeconds, setTimeLeftSeconds] = useState(duration_minutes * 60);
-  const [timeSpentSeconds, setTimeSpentSeconds] = useState(0);
+  const [timeLeftSeconds, setTimeLeftSeconds] = useState(Math.max(1, (duration_minutes * 60) - (resumed_time_spent || 0)));
+  const [timeSpentSeconds, setTimeSpentSeconds] = useState(resumed_time_spent || 0);
 
   // Anti-cheating state
-  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [tabSwitchCount, setTabSwitchCount] = useState(resumed_tab_switches || 0);
   const [showWarningModal, setShowWarningModal] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
