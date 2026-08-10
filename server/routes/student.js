@@ -2,17 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { get, run, all } = require('../db');
 
-// Safe JSON parser helper for unparsed strings, arrays, or comma-separated keys
+// Safe JSON parser helper for strings, arrays, objects, or comma-separated keys
 function safeParseJSON(val, defaultVal = []) {
-  if (Array.isArray(val)) return val;
+  if (typeof val === 'object' && val !== null) return val;
   if (!val) return defaultVal;
   try {
-    const parsed = JSON.parse(val);
-    if (typeof parsed === 'string') {
-      if (parsed.includes(',')) return parsed.split(',').map(s => s.trim());
-      return [parsed.trim()];
-    }
-    return Array.isArray(parsed) ? parsed : [parsed];
+    return JSON.parse(val);
   } catch (err) {
     const str = val.toString().trim();
     if (str.includes(',')) return str.split(',').map(s => s.trim());
@@ -20,11 +15,11 @@ function safeParseJSON(val, defaultVal = []) {
   }
 }
 
-// 100% Robust Bidirectional Answer Matching Helper Function
+// 100% Universal Robust Answer Matching Helper Function
 function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
-  const optionsList = safeParseJSON(optionsRaw).map(o => o.toString().trim());
-  const correctList = safeParseJSON(correctAnswersRaw).map(c => c.toString().trim());
-  const studentList = safeParseJSON(studentAnsRaw).map(s => s.toString().trim());
+  const optionsList = (safeParseJSON(optionsRaw, []) || []).map(o => o.toString().trim());
+  const correctList = (safeParseJSON(correctAnswersRaw, []) || []).map(c => c.toString().trim());
+  const studentList = (safeParseJSON(studentAnsRaw, []) || []).map(s => s.toString().trim());
 
   if (studentList.length === 0 || correctList.length === 0) return false;
 
@@ -52,30 +47,9 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
     }
   }
 
-  if (qType === 'single_choice' || qType === 'true_false') {
-    for (const sChoice of studentList) {
-      const sLower = sChoice.toLowerCase();
-      const sUpper = sChoice.toUpperCase();
+  const typeLower = (qType || '').toString().toLowerCase();
 
-      if (acceptableSet.has(sLower)) return true;
-
-      // 1. If student choice is letter A, B, C, D -> map to option text
-      if (['A', 'B', 'C', 'D'].includes(sUpper)) {
-        const idx = sUpper.charCodeAt(0) - 65;
-        if (optionsList[idx] && acceptableSet.has(optionsList[idx].toLowerCase())) {
-          return true;
-        }
-      }
-
-      // 2. If student choice is option text -> map to letter A, B, C, D
-      const optIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
-      if (optIdx !== -1) {
-        const letter = String.fromCharCode(65 + optIdx);
-        if (acceptableSet.has(letter)) return true;
-      }
-    }
-    return false;
-  } else if (qType === 'multiple_choice') {
+  if (typeLower === 'multiple_choice' || typeLower === 'checkbox') {
     let matchCount = 0;
     for (const sChoice of studentList) {
       const sLower = sChoice.toLowerCase();
@@ -100,9 +74,31 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
     }
     const expectedCount = Math.min(correctList.length, optionsList.length);
     return matchCount >= expectedCount && studentList.length === expectedCount;
-  }
+  } else {
+    // Single choice / mcq / true_false / radio
+    for (const sChoice of studentList) {
+      const sLower = sChoice.toLowerCase();
+      const sUpper = sChoice.toUpperCase();
 
-  return false;
+      if (acceptableSet.has(sLower)) return true;
+
+      // 1. If student choice is letter A, B, C, D -> map to option text
+      if (['A', 'B', 'C', 'D'].includes(sUpper)) {
+        const idx = sUpper.charCodeAt(0) - 65;
+        if (optionsList[idx] && acceptableSet.has(optionsList[idx].toLowerCase())) {
+          return true;
+        }
+      }
+
+      // 2. If student choice is option text -> map to letter A, B, C, D
+      const optIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
+      if (optIdx !== -1) {
+        const letter = String.fromCharCode(65 + optIdx);
+        if (acceptableSet.has(letter)) return true;
+      }
+    }
+    return false;
+  }
 }
 
 // Verify session code and get registration form schema
