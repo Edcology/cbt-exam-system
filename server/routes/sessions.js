@@ -3,7 +3,7 @@ const router = express.Router();
 const xlsx = require('xlsx');
 const { get, run, all } = require('../db');
 const { authenticateAdminToken } = require('../middleware/auth');
-const { isAnswerCorrect } = require('./student');
+const { isAnswerCorrect, safeParseJSON } = require('./student');
 
 // Function to generate random 6-character session code
 function generateSessionCode() {
@@ -229,14 +229,14 @@ router.post('/:id/regrade', authenticateAdminToken, async (req, res) => {
     let regradedCount = 0;
 
     for (const sub of submissions) {
-      const studentAnswers = JSON.parse(sub.answers || '{}');
+      const studentAnswers = safeParseJSON(sub.answers, {});
       let earnedScore = 0;
       let totalMarks = 0;
 
       for (const q of questions) {
-        const options = JSON.parse(q.options);
-        const correctAnswers = JSON.parse(q.correct_answers);
-        const studentAns = studentAnswers[q.id];
+        const options = safeParseJSON(q.options);
+        const correctAnswers = safeParseJSON(q.correct_answers);
+        const studentAns = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : studentAnswers[q.id.toString()];
         const qMarks = q.marks || 1;
         totalMarks += qMarks;
 

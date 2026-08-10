@@ -2,71 +2,104 @@ const express = require('express');
 const router = express.Router();
 const { get, run, all } = require('../db');
 
-// Robust Answer Matching Helper Function
-function isAnswerCorrect(qType, options, correctAnswersRaw, studentAnsRaw) {
-  if (!studentAnsRaw) return false;
+// Safe JSON parser helper for unparsed strings, arrays, or comma-separated keys
+function safeParseJSON(val, defaultVal = []) {
+  if (Array.isArray(val)) return val;
+  if (!val) return defaultVal;
+  try {
+    const parsed = JSON.parse(val);
+    if (typeof parsed === 'string') {
+      if (parsed.includes(',')) return parsed.split(',').map(s => s.trim());
+      return [parsed.trim()];
+    }
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch (err) {
+    const str = val.toString().trim();
+    if (str.includes(',')) return str.split(',').map(s => s.trim());
+    return [str];
+  }
+}
 
-  const optionsList = Array.isArray(options) ? options.map(o => o.toString().trim()) : [];
-  const correctList = Array.isArray(correctAnswersRaw) ? correctAnswersRaw : [correctAnswersRaw];
-  const studentList = Array.isArray(studentAnsRaw) ? studentAnsRaw : [studentAnsRaw];
+// 100% Robust Bidirectional Answer Matching Helper Function
+function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
+  const optionsList = safeParseJSON(optionsRaw).map(o => o.toString().trim());
+  const correctList = safeParseJSON(correctAnswersRaw).map(c => c.toString().trim());
+  const studentList = safeParseJSON(studentAnsRaw).map(s => s.toString().trim());
 
   if (studentList.length === 0 || correctList.length === 0) return false;
 
-  const acceptableCorrect = new Set();
+  // Build acceptable set of answers (option text, letters A/B/C/D, indices)
+  const acceptableSet = new Set();
 
   for (const corr of correctList) {
-    const corrStr = corr.toString().trim();
-    const upperCorr = corrStr.toUpperCase();
+    const cStr = corr.trim();
+    const cUpper = cStr.toUpperCase();
 
-    acceptableCorrect.add(corrStr.toLowerCase());
+    acceptableSet.add(cStr.toLowerCase());
 
-    if (['A', 'B', 'C', 'D'].includes(upperCorr)) {
-      const idx = upperCorr.charCodeAt(0) - 65;
+    if (['A', 'B', 'C', 'D'].includes(cUpper)) {
+      const idx = cUpper.charCodeAt(0) - 65;
       if (optionsList[idx]) {
-        acceptableCorrect.add(optionsList[idx].toLowerCase());
+        acceptableSet.add(optionsList[idx].toLowerCase());
       }
-      acceptableCorrect.add(upperCorr);
-    } else if (!isNaN(parseInt(corrStr)) && parseInt(corrStr) >= 0 && parseInt(corrStr) < optionsList.length) {
-      const idx = parseInt(corrStr);
+      acceptableSet.add(cUpper);
+    } else if (!isNaN(parseInt(cStr)) && parseInt(cStr) >= 0 && parseInt(cStr) < optionsList.length) {
+      const idx = parseInt(cStr);
       if (optionsList[idx]) {
-        acceptableCorrect.add(optionsList[idx].toLowerCase());
+        acceptableSet.add(optionsList[idx].toLowerCase());
       }
-      acceptableCorrect.add(String.fromCharCode(65 + idx));
+      acceptableSet.add(String.fromCharCode(65 + idx));
     }
   }
 
-  const studentChoices = studentList.map(st => st.toString().trim());
-
   if (qType === 'single_choice' || qType === 'true_false') {
-    const sChoice = studentChoices[0];
-    if (!sChoice) return false;
-    const sLower = sChoice.toLowerCase();
+    for (const sChoice of studentList) {
+      const sLower = sChoice.toLowerCase();
+      const sUpper = sChoice.toUpperCase();
 
-    if (acceptableCorrect.has(sLower)) return true;
+      if (acceptableSet.has(sLower)) return true;
 
-    const studentOptIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
-    if (studentOptIdx !== -1) {
-      const letter = String.fromCharCode(65 + studentOptIdx);
-      if (acceptableCorrect.has(letter)) return true;
+      // 1. If student choice is letter A, B, C, D -> map to option text
+      if (['A', 'B', 'C', 'D'].includes(sUpper)) {
+        const idx = sUpper.charCodeAt(0) - 65;
+        if (optionsList[idx] && acceptableSet.has(optionsList[idx].toLowerCase())) {
+          return true;
+        }
+      }
+
+      // 2. If student choice is option text -> map to letter A, B, C, D
+      const optIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
+      if (optIdx !== -1) {
+        const letter = String.fromCharCode(65 + optIdx);
+        if (acceptableSet.has(letter)) return true;
+      }
     }
     return false;
   } else if (qType === 'multiple_choice') {
     let matchCount = 0;
-    for (const sChoice of studentChoices) {
+    for (const sChoice of studentList) {
       const sLower = sChoice.toLowerCase();
-      let matched = acceptableCorrect.has(sLower);
+      const sUpper = sChoice.toUpperCase();
+      let matched = acceptableSet.has(sLower);
 
       if (!matched) {
-        const studentOptIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
-        if (studentOptIdx !== -1) {
-          const letter = String.fromCharCode(65 + studentOptIdx);
-          if (acceptableCorrect.has(letter)) matched = true;
+        if (['A', 'B', 'C', 'D'].includes(sUpper)) {
+          const idx = sUpper.charCodeAt(0) - 65;
+          if (optionsList[idx] && acceptableSet.has(optionsList[idx].toLowerCase())) {
+            matched = true;
+          }
+        } else {
+          const optIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
+          if (optIdx !== -1) {
+            const letter = String.fromCharCode(65 + optIdx);
+            if (acceptableSet.has(letter)) matched = true;
+          }
         }
       }
       if (matched) matchCount++;
     }
     const expectedCount = Math.min(correctList.length, optionsList.length);
-    return matchCount >= expectedCount && studentChoices.length === expectedCount;
+    return matchCount >= expectedCount && studentList.length === expectedCount;
   }
 
   return false;
@@ -102,7 +135,7 @@ router.get('/session-info/:code', async (req, res) => {
     const fields = await all('SELECT * FROM custom_fields WHERE exam_id = ? ORDER BY id ASC', [session.exam_id]);
     const parsedFields = fields.map(f => ({
       ...f,
-      options: f.options ? JSON.parse(f.options) : []
+      options: f.options ? safeParseJSON(f.options) : []
     }));
 
     res.json({
@@ -159,7 +192,7 @@ router.post('/start-exam', async (req, res) => {
     }
     questions = questions.map(q => ({
       ...q,
-      options: JSON.parse(q.options)
+      options: safeParseJSON(q.options)
     }));
     if (session.shuffle_questions) {
       questions.sort(() => Math.random() - 0.5);
@@ -183,14 +216,14 @@ router.post('/start-exam', async (req, res) => {
       }
 
       // If in_progress, allow student to RESUME active exam seamlessly!
-      const existingAnswers = JSON.parse(existingSubmission.answers || '{}');
+      const existingAnswers = safeParseJSON(existingSubmission.answers, {});
       return res.json({
         submission_id: existingSubmission.id,
         session_id: session.id,
         exam_title: session.exam_title,
         duration_minutes: session.duration_minutes,
         student_name: existingSubmission.student_name,
-        student_details: JSON.parse(existingSubmission.student_details),
+        student_details: safeParseJSON(existingSubmission.student_details, {}),
         questions,
         resumed_answers: existingAnswers,
         resumed_time_spent: existingSubmission.time_spent_seconds || 0,
@@ -279,9 +312,9 @@ router.post('/submit-exam', async (req, res) => {
     let totalMarks = 0;
 
     const gradedBreakdown = questions.map(q => {
-      const options = JSON.parse(q.options);
-      const correctAnswers = JSON.parse(q.correct_answers);
-      const studentAns = answers[q.id];
+      const options = safeParseJSON(q.options);
+      const correctAnswers = safeParseJSON(q.correct_answers);
+      const studentAns = answers[q.id] !== undefined ? answers[q.id] : answers[q.id.toString()];
       const qMarks = q.marks || 1;
       totalMarks += qMarks;
 
@@ -403,12 +436,12 @@ router.get('/result/:submissionId', async (req, res) => {
     }
 
     const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [submission.exam_id]);
-    const studentAnswers = JSON.parse(submission.answers || '{}');
+    const studentAnswers = safeParseJSON(submission.answers, {});
 
     const breakdown = questions.map(q => {
-      const options = JSON.parse(q.options);
-      const correctAnswers = JSON.parse(q.correct_answers);
-      const studentAns = studentAnswers[q.id];
+      const options = safeParseJSON(q.options);
+      const correctAnswers = safeParseJSON(q.correct_answers);
+      const studentAns = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : studentAnswers[q.id.toString()];
       const isCorrect = isAnswerCorrect(q.type, options, correctAnswers, studentAns);
 
       return {
@@ -428,7 +461,7 @@ router.get('/result/:submissionId', async (req, res) => {
       submission_id: submission.id,
       can_view_results: true,
       student_name: submission.student_name,
-      student_details: JSON.parse(submission.student_details),
+      student_details: safeParseJSON(submission.student_details, {}),
       exam_title: submission.exam_title,
       score: submission.score,
       total_marks: submission.total_marks,
@@ -448,5 +481,6 @@ router.get('/result/:submissionId', async (req, res) => {
 
 module.exports = {
   router,
-  isAnswerCorrect
+  isAnswerCorrect,
+  safeParseJSON
 };
