@@ -2,7 +2,10 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const bcrypt = require('bcryptjs');
 
-const dbPath = process.env.DB_PATH || path.resolve(__dirname, 'cbt_database.sqlite');
+const fs = require('fs');
+const dbPath = (process.env.DB_PATH && fs.existsSync(path.dirname(process.env.DB_PATH))) 
+  ? process.env.DB_PATH 
+  : path.resolve(__dirname, 'cbt_database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
 // Promisify database operations
