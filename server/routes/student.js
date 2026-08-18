@@ -206,8 +206,52 @@ router.post('/start-exam', async (req, res) => {
 
     if (existingSubmission) {
       if (existingSubmission.status === 'submitted') {
+        const sessionMeta = await get(`
+          SELECT s.*, e.passing_score, e.show_results_immediately
+          FROM exam_sessions s
+          JOIN exams e ON s.exam_id = e.id
+          WHERE s.id = ?
+        `, [session_id]);
+
+        const canView = sessionMeta && (sessionMeta.show_results_immediately || sessionMeta.results_released);
+
+        if (canView) {
+          const studentAnswers = safeParseJSON(existingSubmission.answers, {});
+          const gradedBreakdown = questions.map(q => {
+            const options = safeParseJSON(q.options);
+            const correctAnswers = safeParseJSON(q.correct_answers);
+            const studentAns = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : studentAnswers[q.id.toString()];
+            const isCorrect = isAnswerCorrect(q.type, options, correctAnswers, studentAns);
+            return {
+              question_id: q.id,
+              question_text: q.question_text,
+              type: q.type,
+              options,
+              correct_answers: correctAnswers,
+              student_answer: studentAns || [],
+              is_correct: isCorrect,
+              marks: q.marks,
+              explanation: q.explanation || ''
+            };
+          });
+
+          return res.json({
+            submission_completed: true,
+            submission_id: existingSubmission.id,
+            can_view_results: true,
+            student_name: existingSubmission.student_name,
+            student_details: safeParseJSON(existingSubmission.student_details, {}),
+            exam_title: session.exam_title,
+            score: existingSubmission.score,
+            total_marks: existingSubmission.total_marks,
+            percentage: existingSubmission.percentage,
+            passed: existingSubmission.passed === 1,
+            breakdown: gradedBreakdown
+          });
+        }
+
         return res.status(400).json({
-          error: `Candidate "${studentName}" has already completed and submitted this exam. Multiple attempts are strictly prohibited.`
+          error: `Candidate "${studentName}" has already completed this exam. Results have not been released by the administrator yet.`
         });
       }
 

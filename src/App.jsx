@@ -40,8 +40,13 @@ export default function App() {
   };
 
   const handleExamLoaded = (examData) => {
-    setLoadedExamData(examData);
-    setCurrentView('student-exam');
+    if (examData.submission_completed) {
+      setExamResultData(examData);
+      setCurrentView('student-result');
+    } else {
+      setLoadedExamData(examData);
+      setCurrentView('student-exam');
+    }
   };
 
   const handleExamSubmitted = (resultData) => {
