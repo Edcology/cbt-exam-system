@@ -117,14 +117,12 @@ router.get('/session-info/:code', async (req, res) => {
       return res.status(404).json({ error: 'Invalid Session Code. Please check the code provided by the administrator.' });
     }
 
-    if (session.status !== 'active') {
-      return res.status(400).json({
-        error: session.status === 'draft'
-          ? 'This exam session has not been started yet. Please wait for the administrator.'
-          : session.status === 'paused'
-          ? 'This exam session is currently paused by the administrator.'
-          : 'This exam session has been ended by the administrator.'
-      });
+    if (session.status === 'draft') {
+      return res.status(400).json({ error: 'This exam session has not been started yet. Please wait for the administrator.' });
+    }
+
+    if (session.status === 'paused') {
+      return res.status(400).json({ error: 'This exam session is currently paused by the administrator.' });
     }
 
     // Get Custom Registration Fields
@@ -138,6 +136,8 @@ router.get('/session-info/:code', async (req, res) => {
       session_id: session.id,
       session_code: session.session_code,
       session_name: session.session_name,
+      status: session.status,
+      results_released: session.results_released,
       exam_id: session.exam_id,
       exam_title: session.exam_title,
       description: session.description,
@@ -150,7 +150,7 @@ router.get('/session-info/:code', async (req, res) => {
   }
 });
 
-// Start Exam -> Checks Duplicate Attempts & Enables Session Resume
+// Start Exam -> Checks Duplicate Attempts, Enables Session Resume & Allows Result Lookup
 router.post('/start-exam', async (req, res) => {
   try {
     const { session_id, student_details } = req.body;
@@ -159,14 +159,14 @@ router.post('/start-exam', async (req, res) => {
     }
 
     const session = await get(`
-      SELECT s.*, e.title as exam_title, e.duration_minutes, e.shuffle_questions
+      SELECT s.*, e.title as exam_title, e.duration_minutes, e.shuffle_questions, e.passing_score, e.show_results_immediately
       FROM exam_sessions s
       JOIN exams e ON s.exam_id = e.id
-      WHERE s.id = ? AND s.status = 'active'
+      WHERE s.id = ?
     `, [session_id]);
 
     if (!session) {
-      return res.status(400).json({ error: 'Exam session is not active' });
+      return res.status(400).json({ error: 'Exam session not found' });
     }
 
     // Validate required custom fields
@@ -183,16 +183,10 @@ router.post('/start-exam', async (req, res) => {
 
     // Fetch Questions
     let questions = await all('SELECT id, question_text, type, options, marks FROM questions WHERE exam_id = ?', [session.exam_id]);
-    if (!questions || questions.length === 0) {
-      return res.status(400).json({ error: 'This exam does not have any questions yet.' });
-    }
     questions = questions.map(q => ({
       ...q,
       options: safeParseJSON(q.options)
     }));
-    if (session.shuffle_questions) {
-      questions.sort(() => Math.random() - 0.5);
-    }
 
     // Check if candidate already has an existing attempt for this session
     const existingSubmission = await get(`
@@ -206,14 +200,7 @@ router.post('/start-exam', async (req, res) => {
 
     if (existingSubmission) {
       if (existingSubmission.status === 'submitted') {
-        const sessionMeta = await get(`
-          SELECT s.*, e.passing_score, e.show_results_immediately
-          FROM exam_sessions s
-          JOIN exams e ON s.exam_id = e.id
-          WHERE s.id = ?
-        `, [session_id]);
-
-        const canView = sessionMeta && (sessionMeta.show_results_immediately || sessionMeta.results_released);
+        const canView = session.show_results_immediately || session.results_released;
 
         if (canView) {
           const studentAnswers = safeParseJSON(existingSubmission.answers, {});
@@ -251,24 +238,45 @@ router.post('/start-exam', async (req, res) => {
         }
 
         return res.status(400).json({
-          error: `Candidate "${studentName}" has already completed this exam. Results have not been released by the administrator yet.`
+          error: `Candidate "${studentName}" has completed this exam. Results have not been released by the administrator yet.`
         });
       }
 
-      // If in_progress, allow student to RESUME active exam seamlessly!
-      const existingAnswers = safeParseJSON(existingSubmission.answers, {});
-      return res.json({
-        submission_id: existingSubmission.id,
-        session_id: session.id,
-        exam_title: session.exam_title,
-        duration_minutes: session.duration_minutes,
-        student_name: existingSubmission.student_name,
-        student_details: safeParseJSON(existingSubmission.student_details, {}),
-        questions,
-        resumed_answers: existingAnswers,
-        resumed_time_spent: existingSubmission.time_spent_seconds || 0,
-        resumed_tab_switches: existingSubmission.tab_switch_count || 0
+      // If in_progress and session is active, allow student to RESUME active exam!
+      if (session.status === 'active') {
+        const existingAnswers = safeParseJSON(existingSubmission.answers, {});
+        return res.json({
+          submission_id: existingSubmission.id,
+          session_id: session.id,
+          exam_title: session.exam_title,
+          duration_minutes: session.duration_minutes,
+          student_name: existingSubmission.student_name,
+          student_details: safeParseJSON(existingSubmission.student_details, {}),
+          questions,
+          resumed_answers: existingAnswers,
+          resumed_time_spent: existingSubmission.time_spent_seconds || 0,
+          resumed_tab_switches: existingSubmission.tab_switch_count || 0
+        });
+      }
+    }
+
+    // If new candidate trying to start an ended session
+    if (session.status === 'ended') {
+      return res.status(400).json({
+        error: 'This exam session has been ended by the administrator. New test attempts are no longer permitted.'
       });
+    }
+
+    if (session.status !== 'active') {
+      return res.status(400).json({ error: 'Exam session is not active' });
+    }
+
+    if (!questions || questions.length === 0) {
+      return res.status(400).json({ error: 'This exam does not have any questions yet.' });
+    }
+
+    if (session.shuffle_questions) {
+      questions.sort(() => Math.random() - 0.5);
     }
 
     // Insert New Candidate Record
