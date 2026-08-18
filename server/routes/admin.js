@@ -84,4 +84,33 @@ router.post('/change-password', authenticateAdminToken, async (req, res) => {
   }
 });
 
+// Download Database Backup (.sqlite)
+router.get('/backup-db', authenticateAdminToken, (req, res) => {
+  try {
+    const path = require('path');
+    const dbFilePath = path.resolve(__dirname, '../cbt_database.sqlite');
+    res.download(dbFilePath, `CBT_Database_Backup_${new Date().toISOString().slice(0, 10)}.sqlite`);
+  } catch (err) {
+    console.error('Backup DB error:', err);
+    res.status(500).json({ error: 'Failed to download database backup' });
+  }
+});
+
+// Restore Database Backup (.sqlite)
+router.post('/restore-db', authenticateAdminToken, express.raw({ type: '*/*', limit: '50mb' }), async (req, res) => {
+  try {
+    const path = require('path');
+    const fs = require('fs');
+    const dbFilePath = path.resolve(__dirname, '../cbt_database.sqlite');
+    if (!req.body || req.body.length === 0) {
+      return res.status(400).json({ error: 'No valid database file uploaded' });
+    }
+    fs.writeFileSync(dbFilePath, req.body);
+    res.json({ message: 'Database restored successfully! All sessions and questions have been loaded.' });
+  } catch (err) {
+    console.error('Restore DB error:', err);
+    res.status(500).json({ error: 'Failed to restore database backup' });
+  }
+});
+
 module.exports = router;

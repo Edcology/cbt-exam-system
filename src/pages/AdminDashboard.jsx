@@ -30,6 +30,56 @@ export default function AdminDashboard({ token, onNavigate }) {
     }
   };
 
+  const handleDownloadBackup = async () => {
+    try {
+      const response = await fetch(`/api/admin/backup-db`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Backup failed');
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `CBT_Database_Backup_${new Date().toISOString().slice(0, 10)}.sqlite`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to download database backup');
+    }
+  };
+
+  const handleRestoreBackup = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm('Are you sure you want to restore this database backup file? Your session and exam data will be updated.')) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const response = await fetch('/api/admin/restore-db', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/octet-stream'
+          },
+          body: event.target.result
+        });
+        const res = await response.json();
+        if (!response.ok) throw new Error(res.error || 'Restore failed');
+        alert(res.message);
+        fetchStats();
+      } catch (err) {
+        alert('Failed to restore database: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const handleChangePasswordSubmit = async (e) => {
     e.preventDefault();
     setPwdError('');
@@ -77,6 +127,17 @@ export default function AdminDashboard({ token, onNavigate }) {
           <p className="text-xs text-slate-400">Manage your CBT exams, live sessions, and grade sheets over LAN</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleDownloadBackup}
+            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3 rounded-xl border border-slate-700 transition"
+            title="Download 1-click database backup"
+          >
+            💾 Backup DB
+          </button>
+          <label className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3 rounded-xl border border-slate-700 transition cursor-pointer" title="Restore database from backup file">
+            📥 Restore DB
+            <input type="file" accept=".sqlite" onChange={handleRestoreBackup} className="hidden" />
+          </label>
           <button
             onClick={() => setShowPasswordModal(true)}
             className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3.5 rounded-xl border border-slate-700 transition"
