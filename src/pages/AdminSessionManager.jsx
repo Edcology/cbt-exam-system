@@ -3,7 +3,7 @@ import { PlayCircle, PauseCircle, StopCircle, Key, Copy, Check, Eye, EyeOff, Plu
 import { apiRequest } from '../api';
 import { copyText } from '../utils/copy';
 
-export default function AdminSessionManager({ token, onNavigate }) {
+export default function AdminSessionManager({ token, onNavigateResults }) {
   const [sessions, setSessions] = useState([]);
   const [exams, setExams] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -203,10 +203,10 @@ export default function AdminSessionManager({ token, onNavigate }) {
                 </button>
 
                 <button
-                  onClick={() => onNavigate(`results-${s.id}`)}
+                  onClick={() => onNavigateResults(s.id)}
                   className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-1.5 px-3 rounded-xl shadow transition flex items-center gap-1"
                 >
-                  Grade Sheet →
+                  Grade Sheet & Monitor →
                 </button>
               </div>
             </div>
