@@ -121,38 +121,38 @@ export default function AdminDashboard({ token, onNavigate }) {
   return (
     <div className="space-y-6">
       {/* Title & Quick Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Dashboard Overview</h1>
-          <p className="text-xs text-slate-400">Manage your CBT exams, live sessions, and grade sheets over LAN</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-white">Dashboard Overview</h1>
+          <p className="text-xs text-slate-400">Manage your CBT exams, live sessions, and grade sheets</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
           <button
             onClick={handleDownloadBackup}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3 rounded-xl border border-slate-700 transition"
+            className="flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-2.5 rounded-xl border border-slate-700 transition"
             title="Download 1-click database backup"
           >
             💾 Backup DB
           </button>
-          <label className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3 rounded-xl border border-slate-700 transition cursor-pointer" title="Restore database from backup file">
+          <label className="flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-2.5 rounded-xl border border-slate-700 transition cursor-pointer" title="Restore database from backup file">
             📥 Restore DB
             <input type="file" accept=".sqlite" onChange={handleRestoreBackup} className="hidden" />
           </label>
           <button
             onClick={() => setShowPasswordModal(true)}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-3.5 rounded-xl border border-slate-700 transition"
+            className="flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs py-2 px-2.5 rounded-xl border border-slate-700 transition"
           >
-            <Lock className="w-3.5 h-3.5 text-amber-400" /> Change Password
+            <Lock className="w-3.5 h-3.5 text-amber-400" /> Password
           </button>
           <button
             onClick={() => onNavigate('exams-new')}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2 px-3.5 rounded-xl shadow-lg transition"
+            className="flex items-center justify-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs py-2 px-2.5 rounded-xl shadow-lg transition col-span-2 sm:col-span-1"
           >
-            <Plus className="w-4 h-4" /> Create New Exam
+            <Plus className="w-4 h-4" /> New Exam
           </button>
           <button
             onClick={() => onNavigate('sessions-new')}
-            className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2 px-3.5 rounded-xl shadow-lg transition"
+            className="flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs py-2 px-2.5 rounded-xl shadow-lg transition col-span-2 sm:col-span-1"
           >
             <PlayCircle className="w-4 h-4" /> Launch Live Session
           </button>

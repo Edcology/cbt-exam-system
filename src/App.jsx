@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import NetworkBanner from './components/NetworkBanner';
 import StudentLanding from './pages/StudentLanding';
 import StudentExam from './pages/StudentExam';
@@ -11,17 +11,67 @@ import AdminResultsView from './pages/AdminResultsView';
 import { ShieldCheck, LogOut, LayoutDashboard, BookOpen, PlayCircle, Lock } from 'lucide-react';
 
 export default function App() {
-  // Navigation State
-  const [currentView, setCurrentView] = useState('student-landing'); // 'student-landing', 'student-exam', 'student-result', 'admin-login', 'admin-dashboard', 'admin-exams', 'admin-sessions', 'admin-results'
-  const [activeSessionId, setActiveSessionId] = useState(null);
-
   // Admin Auth State
   const [adminToken, setAdminToken] = useState(localStorage.getItem('cbt_admin_token') || null);
   const [adminUsername, setAdminUsername] = useState(localStorage.getItem('cbt_admin_username') || '');
 
-  // Student Exam Data
-  const [loadedExamData, setLoadedExamData] = useState(null);
-  const [examResultData, setExamResultData] = useState(null);
+  // Persistent View Navigation
+  const getInitialView = () => {
+    const hash = window.location.hash.replace('#/', '').replace('#', '');
+    if (hash && ['student-landing', 'student-exam', 'student-result', 'admin-login', 'admin-dashboard', 'admin-exams', 'admin-sessions', 'admin-results'].includes(hash)) {
+      return hash;
+    }
+    const saved = localStorage.getItem('cbt_current_view');
+    if (saved) return saved;
+    return localStorage.getItem('cbt_admin_token') ? 'admin-dashboard' : 'student-landing';
+  };
+
+  const [currentView, setCurrentViewRaw] = useState(getInitialView);
+  const [activeSessionId, setActiveSessionIdState] = useState(() => {
+    return localStorage.getItem('cbt_active_session_id') || null;
+  });
+
+  // Student Exam Data Persistence
+  const [loadedExamData, setLoadedExamDataState] = useState(() => {
+    const saved = localStorage.getItem('cbt_loaded_exam_data');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const [examResultData, setExamResultDataState] = useState(() => {
+    const saved = localStorage.getItem('cbt_exam_result_data');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const setCurrentView = (view) => {
+    setCurrentViewRaw(view);
+    window.location.hash = '#/' + view;
+    localStorage.setItem('cbt_current_view', view);
+  };
+
+  const setActiveSessionId = (id) => {
+    setActiveSessionIdState(id);
+    if (id) localStorage.setItem('cbt_active_session_id', id);
+    else localStorage.removeItem('cbt_active_session_id');
+  };
+
+  const handleExamLoaded = (examData) => {
+    if (examData.submission_completed) {
+      setExamResultDataState(examData);
+      localStorage.setItem('cbt_exam_result_data', JSON.stringify(examData));
+      setCurrentView('student-result');
+    } else {
+      setLoadedExamDataState(examData);
+      localStorage.setItem('cbt_loaded_exam_data', JSON.stringify(examData));
+      setCurrentView('student-exam');
+    }
+  };
+
+  const handleExamSubmitted = (resultData) => {
+    setExamResultDataState(resultData);
+    localStorage.setItem('cbt_exam_result_data', JSON.stringify(resultData));
+    localStorage.removeItem('cbt_loaded_exam_data');
+    setCurrentView('student-result');
+  };
 
   const handleAdminLoginSuccess = (token, username) => {
     setAdminToken(token);
@@ -36,32 +86,31 @@ export default function App() {
     setAdminUsername('');
     localStorage.removeItem('cbt_admin_token');
     localStorage.removeItem('cbt_admin_username');
+    localStorage.removeItem('cbt_current_view');
+    window.location.hash = '';
     setCurrentView('student-landing');
   };
 
-  const handleExamLoaded = (examData) => {
-    if (examData.submission_completed) {
-      setExamResultData(examData);
-      setCurrentView('student-result');
-    } else {
-      setLoadedExamData(examData);
-      setCurrentView('student-exam');
-    }
-  };
-
-  const handleExamSubmitted = (resultData) => {
-    setExamResultData(resultData);
-    setCurrentView('student-result');
-  };
+  // Synchronize browser back/forward buttons
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace('#/', '').replace('#', '');
+      if (hash && ['student-landing', 'student-exam', 'student-result', 'admin-login', 'admin-dashboard', 'admin-exams', 'admin-sessions', 'admin-results'].includes(hash)) {
+        setCurrentViewRaw(hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 font-sans">
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500 selection:text-white">
       {/* Network IP Broadcast Banner (Admin View Only) */}
       {adminToken && <NetworkBanner />}
 
-      {/* Global Navigation Header */}
-      <header className="bg-slate-900/80 border-b border-slate-800 backdrop-blur px-4 py-3 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      {/* Global Navigation Header - Fully Mobile Responsive */}
+      <header className="bg-slate-900/90 border-b border-slate-800 backdrop-blur-md px-3 sm:px-6 py-2.5 sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div
             onClick={() => setCurrentView('student-landing')}
             className="flex items-center gap-2 cursor-pointer group"
@@ -70,51 +119,51 @@ export default function App() {
               CBT
             </div>
             <div>
-              <span className="font-extrabold text-white text-base tracking-tight">LAN CBT Engine</span>
-              <span className="text-[10px] text-indigo-400 block font-mono -mt-1">Local Network Testing</span>
+              <span className="font-black text-white text-sm sm:text-base tracking-tight block leading-tight">CBT System</span>
+              <span className="text-[10px] text-indigo-400 font-mono block -mt-0.5">Online Assessment</span>
             </div>
           </div>
 
           {/* Admin Header Bar Controls */}
           {adminToken ? (
-            <div className="flex items-center gap-2 md:gap-3 text-xs">
+            <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 text-xs">
               <button
                 onClick={() => setCurrentView('admin-dashboard')}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition ${
                   currentView === 'admin-dashboard' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:bg-slate-800'
                 }`}
               >
                 <LayoutDashboard className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Overview</span>
+                <span className="text-xs">Overview</span>
               </button>
 
               <button
                 onClick={() => setCurrentView('admin-exams')}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition ${
                   currentView === 'admin-exams' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:bg-slate-800'
                 }`}
               >
                 <BookOpen className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Exam Bank</span>
+                <span className="text-xs">Exams</span>
               </button>
 
               <button
                 onClick={() => setCurrentView('admin-sessions')}
-                className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${
+                className={`px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition ${
                   currentView === 'admin-sessions' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-300 hover:bg-slate-800'
                 }`}
               >
                 <PlayCircle className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Live Sessions</span>
+                <span className="text-xs">Sessions</span>
               </button>
 
               <button
                 onClick={handleAdminLogout}
-                className="bg-rose-950/60 hover:bg-rose-900 border border-rose-500/40 text-rose-300 px-3 py-1.5 rounded-lg flex items-center gap-1 transition"
-                title="Log out from Admin"
+                className="bg-rose-950/60 hover:bg-rose-900 border border-rose-500/40 text-rose-300 px-2.5 py-1.5 rounded-lg flex items-center gap-1 transition"
+                title="Log out"
               >
                 <LogOut className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Logout ({adminUsername})</span>
+                <span className="hidden xs:inline text-xs">Logout</span>
               </button>
             </div>
           ) : (
@@ -123,7 +172,7 @@ export default function App() {
                 onClick={() => setCurrentView('admin-login')}
                 className="text-xs bg-indigo-600/30 hover:bg-indigo-600/70 border border-indigo-500/40 text-indigo-200 px-3 py-1.5 rounded-xl font-semibold transition flex items-center gap-1.5"
               >
-                <Lock className="w-3.5 h-3.5" /> Admin Login
+                <Lock className="w-3.5 h-3.5" /> Admin Portal
               </button>
             )
           )}
@@ -131,7 +180,7 @@ export default function App() {
       </header>
 
       {/* Main View Router */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6">
         {currentView === 'student-landing' && (
           <StudentLanding
             onExamLoaded={handleExamLoaded}
@@ -156,24 +205,16 @@ export default function App() {
         {currentView === 'admin-login' && (
           <AdminLogin
             onLoginSuccess={handleAdminLoginSuccess}
-            onNavigateStudent={() => setCurrentView('student-landing')}
+            onBack={() => setCurrentView('student-landing')}
           />
         )}
 
         {currentView === 'admin-dashboard' && adminToken && (
           <AdminDashboard
             token={adminToken}
-            onNavigate={(view) => {
-              if (view.startsWith('results-')) {
-                setActiveSessionId(view.replace('results-', ''));
-                setCurrentView('admin-results');
-              } else if (view === 'exams-new') {
-                setCurrentView('admin-exams');
-              } else if (view === 'sessions-new') {
-                setCurrentView('admin-sessions');
-              } else {
-                setCurrentView(view);
-              }
+            onNavigate={(target, sessionId) => {
+              if (sessionId) setActiveSessionId(sessionId);
+              setCurrentView(target);
             }}
           />
         )}
@@ -181,20 +222,16 @@ export default function App() {
         {currentView === 'admin-exams' && adminToken && (
           <AdminExamManager
             token={adminToken}
-            onBack={() => setCurrentView('admin-dashboard')}
+            onNavigate={(target) => setCurrentView(target)}
           />
         )}
 
         {currentView === 'admin-sessions' && adminToken && (
           <AdminSessionManager
             token={adminToken}
-            onNavigate={(view) => {
-              if (view.startsWith('results-')) {
-                setActiveSessionId(view.replace('results-', ''));
-                setCurrentView('admin-results');
-              } else {
-                setCurrentView(view);
-              }
+            onNavigateResults={(sessionId) => {
+              setActiveSessionId(sessionId);
+              setCurrentView('admin-results');
             }}
           />
         )}
@@ -209,8 +246,8 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 text-center py-4 text-xs text-slate-500">
-        Local Network CBT Exam System &copy; {new Date().getFullYear()} — Zero Cloud Dependency LAN Assessment Engine
+      <footer className="border-t border-slate-800/80 py-4 px-4 text-center text-xs text-slate-500">
+        <div>CBT Assessment System &bull; Secure Exam Portal</div>
       </footer>
     </div>
   );

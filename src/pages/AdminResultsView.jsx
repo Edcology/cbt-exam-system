@@ -107,7 +107,7 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
       {/* Top Action Toolbar (Hidden during print) */}
-      <div className="print:hidden flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="print:hidden flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
@@ -117,35 +117,35 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
           </button>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-black text-white tracking-tight">Official Examination Grade Report</h1>
+              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">Examination Grade Report</h1>
               {refreshing && <RefreshCw className="w-3.5 h-3.5 text-indigo-400 animate-spin" />}
             </div>
             <p className="text-xs text-slate-400">
-              Exam Title: <strong className="text-white">{session.exam_title}</strong> | Code: <span className="text-indigo-300 font-mono">{session.session_code}</span>
+              Exam: <strong className="text-white">{session.exam_title}</strong> | Code: <span className="text-indigo-300 font-mono">{session.session_code}</span>
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full sm:w-auto">
           <button
             onClick={handlePrint}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-4 rounded-xl shadow-lg transition"
+            className="flex items-center justify-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs py-2 px-3 rounded-xl shadow-lg transition col-span-2 sm:col-span-1"
           >
-            <Printer className="w-4 h-4" /> Save PDF / Print Report
+            <Printer className="w-4 h-4" /> Save PDF / Print
           </button>
 
           <button
             onClick={handleRegrade}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 font-bold text-xs py-2 px-3 rounded-xl transition"
+            className="flex items-center justify-center gap-1 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 font-bold text-xs py-2 px-3 rounded-xl transition"
           >
             <RefreshCw className="w-3.5 h-3.5" /> Re-Grade
           </button>
 
           <button
             onClick={handleExportExcel}
-            className="flex items-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs py-2 px-3 rounded-xl transition"
+            className="flex items-center justify-center gap-1 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs py-2 px-3 rounded-xl transition"
           >
-            <FileSpreadsheet className="w-4 h-4" /> Export Excel
+            <FileSpreadsheet className="w-4 h-4" /> Excel
           </button>
         </div>
       </div>
