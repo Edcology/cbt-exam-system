@@ -387,8 +387,6 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
                         </button>
                       )}
                     </td>
-                      )}
-                    </td>
                   </tr>
                 ))
               ) : (
