@@ -59,7 +59,13 @@ export default function StudentExam({ examData, onExamSubmitted }) {
         tab_switch_count: tabSwitchCount,
         time_spent_seconds: timeSpentSeconds,
         answers
-      }).catch(err => console.error('Ping error:', err));
+      })
+      .then(res => {
+        if (res && res.session_status === 'ended') {
+          handleAutoSubmit();
+        }
+      })
+      .catch(err => console.error('Ping error:', err));
     }, 10000);
 
     return () => clearInterval(pingTimer);

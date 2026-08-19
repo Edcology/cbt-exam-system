@@ -68,8 +68,27 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
     }
   };
 
-  const handlePrint = () => {
-    window.print();
+  const handleForceSubmitCandidate = async (subId, studentName) => {
+    if (!confirm(`Are you sure you want to end the exam and force submit current answers for candidate "${studentName}"?`)) {
+      return;
+    }
+    setError('');
+    try {
+      const res = await apiRequest(`/sessions/${sessionId}/submissions/${subId}/force-submit`, 'POST', null, token);
+      alert(res.message);
+      fetchSubmissions();
+    } catch (err) {
+      setError(err.message || 'Failed to force submit candidate exam');
+    }
+  };
+
+  const formatTimestamp = (ts) => {
+    if (!ts) return '—';
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (e) {
+      return ts;
+    }
   };
 
   if (loading) {
@@ -272,6 +291,7 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
                 <th className="p-3 w-10">S/N</th>
                 <th className="p-3">Candidate Name</th>
                 <th className="p-3">Registration & Details</th>
+                <th className="p-3 text-center">Start / Submit Time</th>
                 <th className="p-3 text-center">Status / Progress</th>
                 <th className="p-3 text-center">Score / Marks</th>
                 <th className="p-3 text-center">Percentage</th>
@@ -308,6 +328,10 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
                       {Object.entries(sub.student_details)
                         .map(([k, v]) => `${k}: ${v}`)
                         .join(' | ')}
+                    </td>
+                    <td className="p-3 text-center text-[11px] font-mono text-slate-300 print:text-slate-800">
+                      <div>Start: <strong className="text-white print:text-slate-900">{formatTimestamp(sub.started_at)}</strong></div>
+                      <div>End: <strong className="text-indigo-300 print:text-indigo-900">{sub.status === 'submitted' ? formatTimestamp(sub.submitted_at) : 'In Progress'}</strong></div>
                     </td>
                     <td className="p-3 text-center">
                       {sub.status === 'in_progress' ? (
@@ -354,7 +378,15 @@ export default function AdminResultsView({ token, sessionId, onBack }) {
                           View Answers
                         </button>
                       ) : (
-                        <span className="text-[10px] text-emerald-400 font-semibold italic animate-pulse">Taking test...</span>
+                        <button
+                          onClick={() => handleForceSubmitCandidate(sub.id, sub.student_name)}
+                          className="text-xs bg-rose-950/80 hover:bg-rose-900 border border-rose-500/60 text-rose-300 font-bold px-2.5 py-1 rounded-lg shadow transition"
+                          title="Force submit current answers for this candidate"
+                        >
+                          🛑 End Exam
+                        </button>
+                      )}
+                    </td>
                       )}
                     </td>
                   </tr>

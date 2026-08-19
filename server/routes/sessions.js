@@ -35,7 +35,7 @@ router.get('/', authenticateAdminToken, async (req, res) => {
 // Create new session
 router.post('/', authenticateAdminToken, async (req, res) => {
   try {
-    const { exam_id, session_name } = req.body;
+    const { exam_id, session_name, scheduled_start_time } = req.body;
     if (!exam_id || !session_name) {
       return res.status(400).json({ error: 'Exam ID and session name are required' });
     }
@@ -53,9 +53,9 @@ router.post('/', authenticateAdminToken, async (req, res) => {
     }
 
     const result = await run(`
-      INSERT INTO exam_sessions (exam_id, session_code, session_name, status, results_released)
-      VALUES (?, ?, ?, 'draft', 0)
-    `, [exam_id, sessionCode, session_name.trim()]);
+      INSERT INTO exam_sessions (exam_id, session_code, session_name, status, results_released, scheduled_start_time)
+      VALUES (?, ?, ?, 'draft', 0, ?)
+    `, [exam_id, sessionCode, session_name.trim(), scheduled_start_time || null]);
 
     res.status(201).json({
       message: 'Session created successfully',
@@ -69,6 +69,7 @@ router.post('/', authenticateAdminToken, async (req, res) => {
 });
 
 // Update session status (draft -> active -> paused -> ended)
+// Automatically submits all in_progress candidates when session is ended
 router.patch('/:id/status', authenticateAdminToken, async (req, res) => {
   try {
     const { status } = req.body; // 'active', 'paused', 'ended'
@@ -76,7 +77,7 @@ router.patch('/:id/status', authenticateAdminToken, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status value' });
     }
 
-    const session = await get('SELECT * FROM exam_sessions WHERE id = ?', [req.params.id]);
+    const session = await get('SELECT s.*, e.passing_score FROM exam_sessions s JOIN exams e ON s.exam_id = e.id WHERE s.id = ?', [req.params.id]);
     if (!session) {
       return res.status(404).json({ error: 'Session not found' });
     }
@@ -91,10 +92,96 @@ router.patch('/:id/status', authenticateAdminToken, async (req, res) => {
     }
 
     await run(updateSql, params);
+
+    // Auto-submit all in_progress candidates when session is ended!
+    if (status === 'ended') {
+      const inProgressSubs = await all('SELECT * FROM submissions WHERE session_id = ? AND status = "in_progress"', [req.params.id]);
+      const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [session.exam_id]);
+
+      for (const sub of inProgressSubs) {
+        const studentAnswers = safeParseJSON(sub.answers, {});
+        let earnedScore = 0;
+        let totalMarks = 0;
+
+        for (const q of questions) {
+          const options = safeParseJSON(q.options);
+          const correctAnswers = safeParseJSON(q.correct_answers);
+          const studentAns = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : studentAnswers[q.id.toString()];
+          const qMarks = q.marks || 1;
+          totalMarks += qMarks;
+
+          if (isAnswerCorrect(q.type, options, correctAnswers, studentAns)) {
+            earnedScore += qMarks;
+          }
+        }
+
+        const percentage = totalMarks > 0 ? (earnedScore / totalMarks) * 100 : 0;
+        const passed = percentage >= session.passing_score ? 1 : 0;
+
+        await run(`
+          UPDATE submissions SET
+            score = ?,
+            total_marks = ?,
+            percentage = ?,
+            passed = ?,
+            status = 'submitted',
+            submitted_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [earnedScore, totalMarks, percentage, passed, sub.id]);
+      }
+    }
+
     res.json({ message: `Session status changed to ${status}` });
   } catch (err) {
     console.error('Update session status error:', err);
     res.status(500).json({ error: 'Failed to update session status' });
+  }
+});
+
+// Force Submit / End Exam for a Specific Candidate
+router.post('/:id/submissions/:subId/force-submit', authenticateAdminToken, async (req, res) => {
+  try {
+    const session = await get('SELECT s.*, e.passing_score FROM exam_sessions s JOIN exams e ON s.exam_id = e.id WHERE s.id = ?', [req.params.id]);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    const sub = await get('SELECT * FROM submissions WHERE id = ? AND session_id = ?', [req.params.subId, req.params.id]);
+    if (!sub) return res.status(404).json({ error: 'Submission not found' });
+
+    const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [session.exam_id]);
+    const studentAnswers = safeParseJSON(sub.answers, {});
+    let earnedScore = 0;
+    let totalMarks = 0;
+
+    for (const q of questions) {
+      const options = safeParseJSON(q.options);
+      const correctAnswers = safeParseJSON(q.correct_answers);
+      const studentAns = studentAnswers[q.id] !== undefined ? studentAnswers[q.id] : studentAnswers[q.id.toString()];
+      const qMarks = q.marks || 1;
+      totalMarks += qMarks;
+
+      if (isAnswerCorrect(q.type, options, correctAnswers, studentAns)) {
+        earnedScore += qMarks;
+      }
+    }
+
+    const percentage = totalMarks > 0 ? (earnedScore / totalMarks) * 100 : 0;
+    const passed = percentage >= session.passing_score ? 1 : 0;
+
+    await run(`
+      UPDATE submissions SET
+        score = ?,
+        total_marks = ?,
+        percentage = ?,
+        passed = ?,
+        status = 'submitted',
+        submitted_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [earnedScore, totalMarks, percentage, passed, sub.id]);
+
+    res.json({ message: `Candidate ${sub.student_name}'s exam has been force submitted successfully!` });
+  } catch (err) {
+    console.error('Force submit error:', err);
+    res.status(500).json({ error: 'Failed to force submit candidate exam' });
   }
 });
 

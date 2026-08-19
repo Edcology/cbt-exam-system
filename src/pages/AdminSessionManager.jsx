@@ -13,6 +13,7 @@ export default function AdminSessionManager({ token, onNavigateResults }) {
   // Create Session Form State
   const [selectedExamId, setSelectedExamId] = useState('');
   const [sessionName, setSessionName] = useState('');
+  const [scheduledStartTime, setScheduledStartTime] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [copiedCode, setCopiedCode] = useState(null);
 
@@ -44,11 +45,13 @@ export default function AdminSessionManager({ token, onNavigateResults }) {
     try {
       const res = await apiRequest('/sessions', 'POST', {
         exam_id: selectedExamId,
-        session_name: sessionName
+        session_name: sessionName,
+        scheduled_start_time: scheduledStartTime || null
       }, token);
 
       setSuccess(`Session launched! Code: ${res.session_code}`);
       setSessionName('');
+      setScheduledStartTime('');
       setShowCreateModal(false);
       fetchData();
     } catch (err) {
@@ -248,6 +251,17 @@ export default function AdminSessionManager({ token, onNavigateResults }) {
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">Designated Start Time (Optional)</label>
+                <input
+                  type="datetime-local"
+                  value={scheduledStartTime}
+                  onChange={(e) => setScheduledStartTime(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                />
+                <span className="text-[10px] text-slate-500 block mt-0.5">Students cannot start until this designated time.</span>
               </div>
 
               <div className="flex gap-2 pt-2">

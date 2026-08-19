@@ -120,6 +120,9 @@ async function initDb() {
         session_code TEXT UNIQUE NOT NULL,
         status TEXT DEFAULT 'draft',
         results_released INTEGER DEFAULT 0,
+        scheduled_start_time DATETIME,
+        start_time DATETIME,
+        end_time DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (exam_id) REFERENCES exams (id) ON DELETE CASCADE
       )
@@ -139,12 +142,17 @@ async function initDb() {
         status TEXT DEFAULT 'submitted',
         tab_switch_count INTEGER DEFAULT 0,
         time_spent_seconds INTEGER DEFAULT 0,
-        submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        submitted_at DATETIME,
         FOREIGN KEY (session_id) REFERENCES exam_sessions (id) ON DELETE CASCADE
       )
     `);
 
-    console.log('✅ SQLite Database initialized with live candidate tracking.');
+    // Automatic Column Migrations for existing databases
+    try { await run("ALTER TABLE submissions ADD COLUMN started_at DATETIME DEFAULT CURRENT_TIMESTAMP"); } catch (e) {}
+    try { await run("ALTER TABLE exam_sessions ADD COLUMN scheduled_start_time DATETIME"); } catch (e) {}
+
+    console.log('✅ SQLite Database initialized with candidate timestamps and scheduled session timing.');
   } catch (err) {
     console.error('Database initialization error:', err);
   }

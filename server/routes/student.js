@@ -15,6 +15,12 @@ function safeParseJSON(val, defaultVal = []) {
   }
 }
 
+// Normalized Candidate Name / Reg ID Matcher (Strips spaces, hyphens, underscores, dots, case)
+function normalizeIdentifier(str) {
+  if (!str) return '';
+  return str.toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 // 100% Universal Robust Answer Matching Helper Function
 function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
   const optionsList = (safeParseJSON(optionsRaw, []) || []).map(o => o.toString().trim());
@@ -23,7 +29,6 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
 
   if (studentList.length === 0 || correctList.length === 0) return false;
 
-  // Build acceptable set of answers (option text, letters A/B/C/D, indices)
   const acceptableSet = new Set();
 
   for (const corr of correctList) {
@@ -75,14 +80,12 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
     const expectedCount = Math.min(correctList.length, optionsList.length);
     return matchCount >= expectedCount && studentList.length === expectedCount;
   } else {
-    // Single choice / mcq / true_false / radio
     for (const sChoice of studentList) {
       const sLower = sChoice.toLowerCase();
       const sUpper = sChoice.toUpperCase();
 
       if (acceptableSet.has(sLower)) return true;
 
-      // 1. If student choice is letter A, B, C, D -> map to option text
       if (['A', 'B', 'C', 'D'].includes(sUpper)) {
         const idx = sUpper.charCodeAt(0) - 65;
         if (optionsList[idx] && acceptableSet.has(optionsList[idx].toLowerCase())) {
@@ -90,7 +93,6 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
         }
       }
 
-      // 2. If student choice is option text -> map to letter A, B, C, D
       const optIdx = optionsList.findIndex(o => o.toLowerCase() === sLower);
       if (optIdx !== -1) {
         const letter = String.fromCharCode(65 + optIdx);
@@ -101,7 +103,7 @@ function isAnswerCorrect(qType, optionsRaw, correctAnswersRaw, studentAnsRaw) {
   }
 }
 
-// Verify session code and get registration form schema
+// Verify session code and check scheduled start time
 router.get('/session-info/:code', async (req, res) => {
   try {
     const sessionCode = req.params.code.trim().toUpperCase();
@@ -114,7 +116,7 @@ router.get('/session-info/:code', async (req, res) => {
     `, [sessionCode]);
 
     if (!session) {
-      return res.status(404).json({ error: 'Invalid Session Code. Please check the code provided by the administrator.' });
+      return res.status(404).json({ error: 'Invalid Session Code. Please check the code provided by your administrator.' });
     }
 
     if (session.status === 'draft') {
@@ -123,6 +125,14 @@ router.get('/session-info/:code', async (req, res) => {
 
     if (session.status === 'paused') {
       return res.status(400).json({ error: 'This exam session is currently paused by the administrator.' });
+    }
+
+    // Check Designated Start Time
+    if (session.scheduled_start_time && new Date(session.scheduled_start_time) > new Date()) {
+      const formattedStart = new Date(session.scheduled_start_time).toLocaleString();
+      return res.status(400).json({
+        error: `This exam is scheduled to start at ${formattedStart}. Please wait until the designated start time.`
+      });
     }
 
     // Get Custom Registration Fields
@@ -138,6 +148,7 @@ router.get('/session-info/:code', async (req, res) => {
       session_name: session.session_name,
       status: session.status,
       results_released: session.results_released,
+      scheduled_start_time: session.scheduled_start_time,
       exam_id: session.exam_id,
       exam_title: session.exam_title,
       description: session.description,
@@ -150,7 +161,7 @@ router.get('/session-info/:code', async (req, res) => {
   }
 });
 
-// Start Exam -> Checks Duplicate Attempts, Enables Session Resume & Allows Result Lookup
+// Start Exam -> Checks Duplicate Attempts (Fuzzy/Normalized), Enables Session Resume & Allows Result Lookup
 router.post('/start-exam', async (req, res) => {
   try {
     const { session_id, student_details } = req.body;
@@ -169,6 +180,14 @@ router.post('/start-exam', async (req, res) => {
       return res.status(400).json({ error: 'Exam session not found' });
     }
 
+    // Check Designated Start Time
+    if (session.scheduled_start_time && new Date(session.scheduled_start_time) > new Date()) {
+      const formattedStart = new Date(session.scheduled_start_time).toLocaleString();
+      return res.status(400).json({
+        error: `This exam is scheduled to start at ${formattedStart}. Please wait until the designated start time.`
+      });
+    }
+
     // Validate required custom fields
     const customFields = await all('SELECT * FROM custom_fields WHERE exam_id = ?', [session.exam_id]);
     for (const cf of customFields) {
@@ -181,6 +200,9 @@ router.post('/start-exam', async (req, res) => {
     let studentName = student_details['Full Name'] || student_details['Name'] || Object.values(student_details)[0] || 'Anonymous Candidate';
     let regId = student_details['Student Reg Number'] || student_details['Matric Number'] || student_details['Reg Number'] || studentName;
 
+    const normName = normalizeIdentifier(studentName);
+    const normRegId = normalizeIdentifier(regId);
+
     // Fetch Questions
     let questions = await all('SELECT id, question_text, type, options, marks FROM questions WHERE exam_id = ?', [session.exam_id]);
     questions = questions.map(q => ({
@@ -188,15 +210,21 @@ router.post('/start-exam', async (req, res) => {
       options: safeParseJSON(q.options)
     }));
 
-    // Check if candidate already has an existing attempt for this session
-    const existingSubmission = await get(`
-      SELECT * FROM submissions
-      WHERE session_id = ? AND (
-        LOWER(student_name) = LOWER(?) OR
-        LOWER(student_details) LIKE LOWER(?)
-      )
-      ORDER BY id DESC
-    `, [session_id, studentName.trim(), `%${regId.trim()}%`]);
+    // Fetch all existing candidate submissions for fuzzy/normalized double-submission prevention
+    const existingSubmissions = await all('SELECT * FROM submissions WHERE session_id = ? ORDER BY id DESC', [session_id]);
+
+    let existingSubmission = null;
+    for (const sub of existingSubmissions) {
+      const subNormName = normalizeIdentifier(sub.student_name);
+      const subDetailsObj = safeParseJSON(sub.student_details, {});
+      const subRegId = subDetailsObj['Student Reg Number'] || subDetailsObj['Matric Number'] || subDetailsObj['Reg Number'] || sub.student_name;
+      const subNormRegId = normalizeIdentifier(subRegId);
+
+      if ((normName && subNormName === normName) || (normRegId && subNormRegId === normRegId)) {
+        existingSubmission = sub;
+        break;
+      }
+    }
 
     if (existingSubmission) {
       if (existingSubmission.status === 'submitted') {
@@ -233,6 +261,8 @@ router.post('/start-exam', async (req, res) => {
             total_marks: existingSubmission.total_marks,
             percentage: existingSubmission.percentage,
             passed: existingSubmission.passed === 1,
+            started_at: existingSubmission.started_at,
+            submitted_at: existingSubmission.submitted_at,
             breakdown: gradedBreakdown
           });
         }
@@ -279,13 +309,13 @@ router.post('/start-exam', async (req, res) => {
       questions.sort(() => Math.random() - 0.5);
     }
 
-    // Insert New Candidate Record
+    // Insert New Candidate Record with started_at timestamp
     const subResult = await run(`
       INSERT INTO submissions (
         session_id, student_name, student_details, answers,
         score, total_marks, percentage, passed, status,
-        tab_switch_count, time_spent_seconds
-      ) VALUES (?, ?, ?, '{}', 0, 0, 0, 0, 'in_progress', 0, 0)
+        tab_switch_count, time_spent_seconds, started_at
+      ) VALUES (?, ?, ?, '{}', 0, 0, 0, 0, 'in_progress', 0, 0, CURRENT_TIMESTAMP)
     `, [
       session_id,
       studentName.trim(),
@@ -315,6 +345,13 @@ router.post('/ping-exam', async (req, res) => {
     const { submission_id, tab_switch_count, time_spent_seconds, answers } = req.body;
     if (!submission_id) return res.status(400).json({ error: 'Missing submission ID' });
 
+    const submission = await get('SELECT sub.*, s.status as session_status FROM submissions sub JOIN exam_sessions s ON sub.session_id = s.id WHERE sub.id = ?', [submission_id]);
+    if (!submission) return res.status(404).json({ error: 'Submission not found' });
+
+    if (submission.session_status === 'ended') {
+      return res.json({ status: 'ended', session_status: 'ended' });
+    }
+
     let updateSql = 'UPDATE submissions SET tab_switch_count = ?, time_spent_seconds = ?';
     let params = [tab_switch_count || 0, time_spent_seconds || 0];
 
@@ -327,14 +364,14 @@ router.post('/ping-exam', async (req, res) => {
     params.push(submission_id);
 
     await run(updateSql, params);
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', session_status: submission.session_status });
   } catch (err) {
     console.error('Ping exam error:', err);
     res.status(500).json({ error: 'Failed to record ping' });
   }
 });
 
-// Submit Exam & Smart Auto-Grading
+// Submit Exam & Smart Auto-Grading (with submitted_at timestamp)
 router.post('/submit-exam', async (req, res) => {
   try {
     const { submission_id, session_id, student_name, student_details, answers, tab_switch_count, time_spent_seconds } = req.body;
@@ -422,8 +459,8 @@ router.post('/submit-exam', async (req, res) => {
         INSERT INTO submissions (
           session_id, student_name, student_details, answers,
           score, total_marks, percentage, passed, status,
-          tab_switch_count, time_spent_seconds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
+          tab_switch_count, time_spent_seconds, started_at, submitted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `, [
         session_id,
         student_name || 'Candidate',
@@ -518,6 +555,7 @@ router.get('/result/:submissionId', async (req, res) => {
       passing_score: submission.passing_score,
       time_spent_seconds: submission.time_spent_seconds,
       tab_switch_count: submission.tab_switch_count,
+      started_at: submission.started_at,
       submitted_at: submission.submitted_at,
       breakdown
     });
@@ -530,5 +568,6 @@ router.get('/result/:submissionId', async (req, res) => {
 module.exports = {
   router,
   isAnswerCorrect,
-  safeParseJSON
+  safeParseJSON,
+  normalizeIdentifier
 };
